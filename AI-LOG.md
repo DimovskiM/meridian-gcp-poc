@@ -197,3 +197,58 @@ produce a design that cannot work, or one that works but leaks money or access,
 and it will keep patching around a constraint rather than naming it. It is very
 good at the parts that are mechanical, and it does not reliably tell you when
 you have asked for something impossible — you have to ask.
+
+## 6. What I would add for a real engagement
+
+Everything above was a single operator in one long session. On a real project
+with several people and a repository that outlives the engagement, the tooling
+itself has to be set up so the next person — or the next session — starts with
+the context rather than rediscovering it.
+
+**A `CLAUDE.md` at the repo root.** The single highest-leverage file. It would
+carry the things that are expensive to re-derive and easy to violate by
+accident: the architecture and why Cloud Run rather than App Engine or GKE; the
+ownership split (Terraform owns Cloud Run configuration, `gcloud run deploy`
+owns only the image, and the `ignore_changes` fields that keep them from
+fighting); the bootstrap-versus-main-module boundary and why CI must never
+manage its own identity; the constraints that are decisions rather than
+oversights — EU-only region, no public IP on the database, no long-lived
+credentials, migrations as a job and never from a laptop; and the conventions
+for extending it, such as adding a region by copying an `envs/*.tfvars` file.
+
+The point is that a model reading this repo cold will otherwise re-suggest
+exactly the things that were already rejected here: the default VPC, a service
+account key, migrations at app startup, an `ignore_changes` band-aid over drift
+nobody diagnosed. I hit several of those in this session precisely because that
+context lived only in my head.
+
+**Skills for the repeatable operations.** The things I ran by hand and would not
+want anyone improvising: bootstrapping a new environment in the right order
+(bootstrap module, then variables, then main module); adding a region; rotating
+the database password; the pre-submission verification sweep (`terraform plan`
+clean on both modules, `/health` returning the right shape, no public IP on the
+instance, no key material anywhere in the tree). A skill is the difference
+between a documented runbook and one that actually gets followed, and it is
+where the "did you remember to check X" failures disappear.
+
+**Subagents for the work that benefits from a cold reader.** A security-review
+agent pointed at the deployed IAM policy rather than the config — that is how
+the state-bucket finding surfaced, and it is worth running on a schedule rather
+than once. A cost-review agent to catch the class of mistake that does not fail
+loudly: an over-sized Cloud SQL tier, a min-instance count nobody meant to set,
+a load balancer left running. A drift-check agent on a cron, since the
+convergence problems in this build were only visible by running `plan` after
+each deploy and would otherwise have shipped silently.
+
+**Hooks and settings.** A pre-commit hook that blocks anything matching key
+material or a private key block — cheap, and it removes an entire category of
+mistake rather than relying on someone remembering to grep. A permissions
+allowlist for the read-only `gcloud`/`terraform` commands used constantly, so
+the genuinely destructive ones still prompt and actually get read.
+
+Two things in this session argue for all of the above. The permission classifier
+blocked a recursive `gcloud storage rm` and forced me into the Terraform-native
+path, which was the correct fix — a guardrail catching a real mistake. And I ran
+`gcloud run deploy` by hand to force a fresh revision when I should have
+triggered the pipeline, which is exactly the manual change the exercise
+prohibits. A hook or a skill would have caught that; my own discipline did not.
