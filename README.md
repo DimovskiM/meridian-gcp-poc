@@ -152,6 +152,13 @@ each other over the same resources. AI-LOG.md covers what that cost.
 - **Cloud SQL: `REGIONAL`, backups, PITR, and CMEK.** All disabled here for a
   three-week PoC. A payments company will likely require customer-managed keys;
   I did not spend a clarification question on it.
+- **Time-bound privileged access.** Every human grant here is permanent —
+  project Owner and the read-only reviewer binding. Production should have no
+  standing production privileges at all: just-in-time elevation via Privileged
+  Access Manager, where a role is requested with a justification, approved, and
+  expires on its own. Combined with IAM database authentication and IAP
+  tunnelling (both in ASSUMPTIONS.md), that makes access attributable,
+  passwordless, and temporary.
 - **Secret rotation.** `db-password` is generated once and never rotated.
 - **Monitoring.** No uptime check, no alert policy, no SLO, no log-based
   metrics.

@@ -242,10 +242,25 @@ The cost is a ~1–3s cold start on the first request after an idle period
   customer-managed encryption keys. Production wants `REGIONAL`, PITR, and — for
   a payments company — very likely CMEK, which I would have asked about with a
   second clarification round.
-- **No PCI scope confirmed.** The brief never says whether this service touches
-  cardholder data. If it does, network isolation is the floor, not the ceiling —
-  segmentation, key management, logging, and access review all become in scope.
-  I would ask this before any production design.
+- **The regulatory scope of this service is undefined, and it changes the
+  design.** Meridian is a payments company and says their auditors are strict,
+  but the brief never states which regime applies or what data this particular
+  service handles. That is the difference between "keep the database off the
+  internet" being the whole requirement and being the starting point — network
+  segmentation, key custody, retention periods, log immutability, and periodic
+  access recertification are all consequences of the answer, not optional
+  hardening. I would establish this before proposing a production design rather
+  than assume the strictest or the loosest reading.
+- **No privileged access management.** Production access to this environment
+  should be time-bound and approved, not standing. Today the only human grants
+  are project Owner and the read-only reviewer binding, both permanent. The
+  production shape is just-in-time elevation — an engineer requests a role for
+  a fixed window with a justification, it is approved, and it expires on its
+  own — so that no human carries production privileges by default. On GCP that
+  is Privileged Access Manager, which issues temporary role grants against an
+  entitlement rather than a permanent binding. It pairs directly with the IAM
+  database authentication and IAP tunnelling described above: those make access
+  attributable and passwordless, and PAM makes it temporary and reviewable.
 - **No monitoring, alerting, or log-based metrics.** No uptime check, no SLO, no
   alert policy.
 - **`deletion_protection = false`** on Cloud SQL and Cloud Run, because this
