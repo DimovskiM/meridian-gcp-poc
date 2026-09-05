@@ -4,6 +4,48 @@ Everything I had to decide without Meridian, and how I resolved what they left
 open. The clarification round is closed, so anything unanswered below is an
 assumption I made and would confirm on day one of a real engagement.
 
+## What I asked, and what Meridian answered
+
+I sent three questions and two objections. Their reply, verbatim:
+
+> Today our developers connect through a client VPN into the AWS account and
+> reach the database from there. We are not attached to reproducing that on
+> Google Cloud. Both requirements are real: the auditors will not move on if the
+> database is open to the internet, and the developers need to run their
+> migrations. How they get to the database is your call, we will follow your
+> recommendation.
+>
+> We have not decided on a specific region. It's customer payment data and our
+> legal team has been clear that it stays in the EU. The US thing is a maybe for
+> next year, not now. We will follow your recommendation here.
+>
+> Nothing connects the two today. If we go ahead there will be a period where
+> both estates run side by side, so assume a link will be needed at some point.
+> Do not build it now, just do not leave us somewhere we cannot get out of
+> later.
+>
+> On the default VPC: that is what we understood from our own reading, but we
+> are not Google Cloud experts, that is why we brought you in. If we have it
+> wrong, we will follow your recommendation to build it the right way.
+>
+> On the service account key: our platform team set that up a while ago and it
+> is how the rest of our estate works, so there would need to be a good reason
+> to deviate. If you think there is a better way, do it your way but write down
+> why, so I can take it to them.
+
+Four of the five came back as "your call, we will follow your recommendation",
+which moves the weight of this document from *what did they tell me* to *what
+did I decide and why*. The fifth — the service account key — is the only one
+where they pushed back, and it is the only place I overrode a stated preference.
+Their phrasing there ("so I can take it to them") is the reason the WIF
+rationale below is written to be forwarded to their platform team rather than
+just filed.
+
+One thing I did not ask and should have: **what they run on AWS today**. The
+brief says "one of our API services" and that they are on AWS, but never names
+ECS, EKS, Lambda, or EC2. That would have sharpened the compute choice
+considerably. It is recorded as an open assumption below.
+
 ## Resolved by the clarification round
 
 **Developer access to the database.** Meridian described a client VPN into AWS
