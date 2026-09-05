@@ -2,7 +2,6 @@ import os
 import logging
 
 from sqlalchemy import create_engine, text
-from google.cloud import secretmanager
 
 logger = logging.getLogger("meridian")
 
@@ -12,41 +11,24 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "meridian")
 DB_USER = os.environ.get("DB_USER", "meridian_app")
 
-# Fixed, not configurable — these match the literal secret_id values in
-# infra/secrets.tf exactly. Not worth passing through an env var: there are
-# exactly two secrets and neither name is ever expected to vary by
-# environment. What Terraform actually owns is *access* to them (the
-# secretAccessor IAM bindings in secrets.tf), not this string.
-DB_PASSWORD_SECRET_NAME = "db-password"
-THIRD_PARTY_TOKEN_SECRET_NAME = "third-party-api-token"
-
-_secret_client = None
-
-
-def _client():
-    global _secret_client
-    if _secret_client is None:
-        _secret_client = secretmanager.SecretManagerServiceClient()
-    return _secret_client
-
-
-def read_secret(secret_name: str) -> str:
-    """Reads the latest version of a secret. Live call every time — no caching.
-
-    Deployed (GCP_PROJECT set): reads from Secret Manager under the app's own
-    service account identity. Local dev (GCP_PROJECT unset): reads a same-named
-    env var instead, so local development never needs real Secret Manager access.
-    """
-    if not GCP_PROJECT:
-        return os.environ[secret_name.upper().replace("-", "_")]
-
-    name = f"projects/{GCP_PROJECT}/secrets/{secret_name}/versions/latest"
-    response = _client().access_secret_version(name=name)
-    return response.payload.data.decode("utf-8")
+# Both secrets are injected by Cloud Run from Secret Manager at instance
+# start (see the secret_key_ref blocks in infra/cloudrun.tf). The platform
+# fetches them under the service's own identity, so no Secret Manager API
+# call is made from application code at all — locally they're just plain env
+# vars, so the code path is identical in both environments.
+#
+# Tradeoff, deliberate and recorded in ASSUMPTIONS.md: /health's `secret`
+# field therefore reports whether the mounted secret is present and non-empty,
+# not whether Secret Manager is reachable right now. A live API read per
+# request would prove more (that the service account still holds
+# secretAccessor), but /health is public and unauthenticated, so it would also
+# hand anyone an unbounded way to drive Secret Manager API calls and cost. If
+# the deeper signal is wanted, the right shape is a cached read with a TTL
+# behind an authenticated endpoint, not a live call on every public request.
 
 
 def build_db_url() -> str:
-    password = read_secret(DB_PASSWORD_SECRET_NAME)
+    password = os.environ["DB_PASSWORD"]
     return f"postgresql+psycopg://{DB_USER}:{password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 
@@ -72,10 +54,14 @@ def check_db_connection() -> bool:
 
 
 def check_secret_read() -> bool:
-    """Live check: actually reads a secret from Secret Manager this request."""
-    try:
-        read_secret(THIRD_PARTY_TOKEN_SECRET_NAME)
+    """Checks the Secret-Manager-injected token is present this request.
+
+    Not hardcoded: the value comes from Secret Manager via Cloud Run's secret
+    injection, so removing the secret, the IAM binding, or the env wiring
+    makes this return False.
+    """
+    token = os.environ.get("THIRD_PARTY_API_TOKEN")
+    if token:
         return True
-    except Exception:
-        logger.exception("secret health check failed")
-        return False
+    logger.error("third-party API token missing or empty")
+    return False

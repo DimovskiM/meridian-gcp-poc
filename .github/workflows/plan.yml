@@ -5,18 +5,21 @@ on:
     paths:
       - "infra/**"
       - ".github/workflows/plan.yml"
+  workflow_dispatch:
 
 jobs:
   plan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # required to fetch the GitHub OIDC token for WIF
     steps:
       - uses: actions/checkout@v4
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -31,8 +34,4 @@ jobs:
         env:
           TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
           TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
-          # No image built on a plan-only run for a PR — pin to whatever's
-          # currently deployed so the plan reflects real infra drift, not a
-          # spurious app-version diff.
-          TF_VAR_container_image: ${{ vars.CURRENT_CONTAINER_IMAGE }}
-        run: terraform plan -input=false
+        run: terraform plan -input=false -var-file=envs/europe-west3.tfvars

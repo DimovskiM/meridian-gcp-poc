@@ -38,6 +38,7 @@ variable "third_party_api_token" {
 }
 
 variable "container_image" {
-  description = "Fully qualified Artifact Registry image URI (including tag) to deploy. Must already exist — built and pushed before this apply. The only value an app deploy changes; the commit SHA is baked into the image itself at build time, not passed through here."
+  description = "Image used only when Terraform first creates the service and job — after that, `gcloud run deploy` owns the image and Terraform ignores changes to it (see cloudrun.tf). Defaults to Google's hello container so a from-scratch `terraform apply` works before any app image has been built."
   type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }

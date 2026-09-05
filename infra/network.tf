@@ -65,19 +65,7 @@ resource "google_compute_firewall" "allow_internal" {
   }
 }
 
-# App Engine flexible instances run with instance_ip_mode = INTERNAL (no
-# public IP on the VM itself) — public HTTP traffic is proxied in by Google's
-# App Engine front end regardless, but it still performs health checks
-# directly against the instance from Google's documented health-check ranges.
-resource "google_compute_firewall" "allow_google_health_checks" {
-  project       = var.project_id
-  name          = "meridian-allow-health-checks"
-  network       = google_compute_network.vpc.id
-  direction     = "INGRESS"
-  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["8080"]
-  }
-}
+# No health-check ingress rule needed: Cloud Run instances aren't VMs in this
+# VPC. Direct VPC egress gives them an outbound route to private ranges (which
+# is how they reach Cloud SQL); inbound traffic and health checks are handled
+# by Cloud Run's own front end, outside the VPC entirely.

@@ -1,21 +1,27 @@
-# The CI/CD identity lives here, not in the main module, deliberately.
+# The CI/CD identity lives here, not in the main module, deliberately: the
+# main module is what CI applies, so CI must not be able to recreate or
+# rotate the identity it is currently authenticating as. Bootstrap is applied
+# once, by hand, by a human.
 #
-# GitHub Actions needs this service account's key to run `terraform apply` on
-# the main module at all — if the key were instead defined as a resource
-# inside the main module, CI would be managing its own credential as part of
-# the same apply it's using that credential to run. Any future drift, taint,
-# or provider-driven replacement of that key resource would rotate the
-# credential mid-run, and nothing updates the GitHub secret automatically —
-# the next CI run would simply fail to authenticate. Keeping it in bootstrap
-# (applied once, by hand, by a human) means the main module never has a path
-# to regenerate the key it's currently running under.
+# Documented deviation from Meridian's brief: their platform team asked for a
+# service account JSON key stored as a GitHub secret, to match the rest of
+# their estate. This uses Workload Identity Federation instead — GitHub's
+# OIDC token is exchanged for a short-lived (1 hour) GCP access token per
+# run, and no key exists to leak, rotate, or expire. Reasons, in order:
 #
-# Documented reversal from the clarification email: that email told Meridian
-# this would use Workload Identity Federation instead of a static key. This
-# builds the key exactly as Meridian's platform team originally asked,
-# matching their existing estate pattern — see ASSUMPTIONS.md for the full
-# reasoning and the known tradeoff (a key with this much scope, with no
-# expiry, stored in Terraform state in plaintext via google_service_account_key).
+#   1. The exercise states "no long-lived credentials anywhere in the
+#      repository" as a hard requirement.
+#   2. Google is progressively disabling service account key creation via
+#      organization policy defaults (disableServiceAccountKeyCreation); the
+#      estate pattern Meridian asked us to match is on its way out, and would
+#      break outright under that constraint.
+#   3. google_service_account_key writes the private key material into
+#      Terraform state in plaintext — so "the key is not in the repo" would
+#      have been true while the key sat in the state bucket regardless.
+#   4. Meridian's own reply invited this: "if you think there is a better way,
+#      do it your way but write down why, so I can take it to them."
+#
+# See ASSUMPTIONS.md for the full tradeoff, including what was given up.
 
 resource "google_project_service" "iam" {
   project            = var.project_id
@@ -23,9 +29,15 @@ resource "google_project_service" "iam" {
   disable_on_destroy = false
 }
 
-resource "google_project_service" "secretmanager" {
+resource "google_project_service" "iamcredentials" {
   project            = var.project_id
-  service            = "secretmanager.googleapis.com"
+  service            = "iamcredentials.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "sts" {
+  project            = var.project_id
+  service            = "sts.googleapis.com"
   disable_on_destroy = false
 }
 
@@ -36,62 +48,79 @@ resource "google_service_account" "ci" {
   depends_on   = [google_project_service.iam]
 }
 
-resource "google_service_account_key" "ci_key" {
-  service_account_id = google_service_account.ci.name
+resource "google_iam_workload_identity_pool" "github" {
+  project                   = var.project_id
+  workload_identity_pool_id = "github-pool"
+  display_name              = "GitHub Actions"
+  depends_on                = [google_project_service.iam]
 }
 
-# Stored here for easy hand-off: `gcloud secrets versions access latest
-# --secret=ci-sa-key --project=<project_id>` (or the Console) gives you the
-# raw JSON to paste straight into the GitHub repo's GCP_SA_KEY secret — no
-# `terraform output -raw | base64 -d` step needed.
-resource "google_secret_manager_secret" "ci_key" {
-  project   = var.project_id
-  secret_id = "ci-sa-key"
+resource "google_iam_workload_identity_pool_provider" "github" {
+  project                            = var.project_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-provider"
+  display_name                       = "GitHub OIDC"
 
-  replication {
-    auto {}
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
   }
 
-  depends_on = [google_project_service.secretmanager]
+  # Without this condition, ANY GitHub repository on github.com could exchange
+  # its OIDC token for credentials in this project. Scoping to the one repo is
+  # the whole security boundary — never widen it to a bare "true".
+  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
 }
 
-resource "google_secret_manager_secret_version" "ci_key" {
-  secret      = google_secret_manager_secret.ci_key.id
-  secret_data = base64decode(google_service_account_key.ci_key.private_key)
+# Only tokens from the named repository may impersonate the CI service
+# account. principalSet scopes the binding to that repository's identities.
+resource "google_service_account_iam_member" "ci_workload_identity_user" {
+  service_account_id = google_service_account.ci.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
 
 # roles/editor is the broad baseline: it covers creating the VPC, Cloud SQL,
-# App Engine version, Artifact Registry repo, service accounts, etc. It
-# deliberately does NOT include any setIamPolicy permission, on any resource
-# type — that's a real, documented exclusion (Editor can't grant itself more
-# access). This config sets IAM policy in exactly two shapes, so exactly two
-# narrow roles are added on top — not a defensive broad grant:
+# the Cloud Run service and job, the Artifact Registry repo, service accounts,
+# etc. It deliberately does NOT include any setIamPolicy permission, on any
+# resource type — that's a real, documented exclusion (Editor can't grant
+# itself more access). This config sets IAM policy in three shapes, so exactly
+# three narrow roles are added on top — not a defensive broad grant:
 resource "google_project_iam_member" "ci_editor" {
   project = var.project_id
   role    = "roles/editor"
   member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
-# Needed for the one project-level binding this config makes:
-# google_project_iam_member.app_cloudsql_client (roles/cloudsql.client on the
-# app's service account, in the main module's iam.tf).
+# For the project-level binding in the main module's iam.tf
+# (roles/cloudsql.client on the app's service account).
 resource "google_project_iam_member" "ci_project_iam_admin" {
   project = var.project_id
   role    = "roles/resourcemanager.projectIamAdmin"
   member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
-# Needed for the two secret-level bindings this config makes:
-# google_secret_manager_secret_iam_member on db-password and
-# third-party-api-token (in the main module's secrets.tf). Project-scoped
-# rather than bound to just those two secrets — narrower scoping would need a
-# hand-rolled custom role, not worth it for a PoC with two secrets total.
+# For the two secret-level bindings in the main module's secrets.tf.
+# Project-scoped rather than bound to just those two secrets — narrower
+# scoping would need a hand-rolled custom role, not worth it for two secrets.
 resource "google_project_iam_member" "ci_secret_manager_admin" {
   project = var.project_id
   role    = "roles/secretmanager.admin"
   member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
+# For the run.invoker binding granting allUsers access to the Cloud Run
+# service (main module's cloudrun.tf) — roles/editor cannot set IAM policy.
+resource "google_project_iam_member" "ci_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.ci.email}"
+}
+
 # No artifactregistry.admin: nothing in this config sets IAM policy on the
 # registry, and roles/editor already covers repository creation plus image
-# push/pull (artifactregistry.repositories.uploadArtifacts and friends).
+# push/pull.

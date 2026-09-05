@@ -6,13 +6,14 @@ on:
     paths:
       - "app/**"
       - ".github/workflows/deploy-app.yml"
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write # to record the deployed image for deploy-infra.yml to reuse
+      id-token: write # required to fetch the GitHub OIDC token for WIF
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +22,8 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
@@ -33,38 +35,41 @@ jobs:
         env:
           IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/meridian-app/api:${{ steps.vars.outputs.sha_short }}
         run: |
-          # Commit SHA is baked into the image, not passed to Terraform.
+          # Commit SHA is baked into the image so it travels with the artifact
+          # rather than being plumbed through infra config.
           docker build --build-arg GIT_COMMIT=${{ steps.vars.outputs.sha_short }} -t "$IMAGE" app/
           docker push "$IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.16.0"
-
-      - name: terraform init
-        working-directory: infra
-        run: terraform init
-
-      # -target scopes this to the app version resource only, so an app
-      # deploy can't quietly apply unrelated infra drift sitting in main.
-      # The only input that changes is container_image; everything else about
-      # the version (env vars, network, service account) is already in the
-      # Terraform config and untouched here.
-      - name: Deploy new app version
-        working-directory: infra
-        env:
-          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
-          TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
-          TF_VAR_container_image: ${{ steps.image.outputs.image }}
+      # Migrations run before the new revision goes live, so the schema is
+      # never behind the code that expects it. --wait makes a failed migration
+      # fail the deploy here, before any traffic moves.
+      - name: Run database migrations
         run: |
-          terraform apply -input=false -auto-approve \
-            -target=google_app_engine_flexible_app_version.app
+          gcloud run jobs update meridian-migrate \
+            --image="${{ steps.image.outputs.image }}" \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }}
+          gcloud run jobs execute meridian-migrate \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }} \
+            --wait
 
-      # deploy-infra.yml runs on infra-only changes, where no fresh image gets
-      # built — it needs to know what's currently deployed so an unrelated
-      # infra apply doesn't roll the app back to a stale image.
-      - name: Record deployed image for deploy-infra.yml
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh variable set CURRENT_CONTAINER_IMAGE --body "${{ steps.image.outputs.image }}"
+      # Updates only the image. Everything else about the service — env vars,
+      # VPC egress, service account, scaling, probes — is owned by Terraform
+      # (infra/cloudrun.tf), which ignores image drift so these don't fight.
+      - name: Deploy new revision
+        run: |
+          gcloud run deploy meridian-api \
+            --image="${{ steps.image.outputs.image }}" \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }}
+
+      - name: Show deployed health endpoint
+        run: |
+          URL=$(gcloud run services describe meridian-api \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "Deployed: $URL/health"
+          curl -fsS "$URL/health" | tee /dev/stderr

@@ -6,18 +6,21 @@ on:
     paths:
       - "infra/**"
       - ".github/workflows/deploy-infra.yml"
+  workflow_dispatch:
 
 jobs:
   apply:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # required to fetch the GitHub OIDC token for WIF
     steps:
       - uses: actions/checkout@v4
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -27,13 +30,21 @@ jobs:
         working-directory: infra
         run: terraform init
 
-      - name: terraform apply
+      # Plan is saved to a file and applied verbatim, so what gets applied is
+      # exactly what was planned — no re-resolution between the two steps that
+      # could pick up drift or a concurrent change. The plan output is also in
+      # the run log, so there's a record of what each apply actually did.
+      #
+      # No container_image passed: Terraform ignores image drift on the Cloud
+      # Run service and job, so an infra change can't roll the app back to a
+      # stale image.
+      - name: terraform plan
         working-directory: infra
         env:
           TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
           TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
-          # Not built here — read from whatever deploy-app.yml last recorded.
-          # An infra-only change re-applies against the currently-deployed
-          # image rather than forcing an unrelated rebuild.
-          TF_VAR_container_image: ${{ vars.CURRENT_CONTAINER_IMAGE }}
-        run: terraform apply -input=false -auto-approve
+        run: terraform plan -input=false -var-file=envs/europe-west3.tfvars -out=tfplan
+
+      - name: terraform apply
+        working-directory: infra
+        run: terraform apply -input=false -auto-approve tfplan

@@ -3,7 +3,7 @@ locals {
     "compute.googleapis.com",
     "sqladmin.googleapis.com",
     "secretmanager.googleapis.com",
-    "appengine.googleapis.com",
+    "run.googleapis.com",
     "servicenetworking.googleapis.com",
     "iam.googleapis.com",
     "artifactregistry.googleapis.com",
