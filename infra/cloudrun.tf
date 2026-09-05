@@ -59,6 +59,18 @@ resource "google_cloud_run_v2_service" "api" {
         container_port = 8080
       }
 
+      # Smallest viable: 1 vCPU is the floor for a service that isn't using
+      # CPU throttling tricks, and 512Mi comfortably holds FastAPI plus a
+      # small SQLAlchemy pool. Scale-to-zero means this costs nothing at idle
+      # regardless.
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+        cpu_idle = true # don't bill for CPU between requests
+      }
+
       dynamic "env" {
         for_each = local.app_env
         content {
@@ -153,6 +165,14 @@ resource "google_cloud_run_v2_job" "migrate" {
       containers {
         image   = var.container_image
         command = ["python", "migrate.py"]
+
+        # Migrations are short and not CPU-bound; the floor is plenty.
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
 
         dynamic "env" {
           for_each = local.app_env

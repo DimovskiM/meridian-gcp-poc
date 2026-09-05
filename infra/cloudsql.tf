@@ -6,7 +6,18 @@ resource "google_sql_database_instance" "postgres" {
   deletion_protection = false # PoC: this environment is torn down after review
 
   settings {
-    tier              = "db-custom-1-3840"
+    # Edition pinned explicitly: Postgres 16 now defaults to ENTERPRISE_PLUS,
+    # which rejects custom/shared-core tiers ("Invalid Tier for
+    # (ENTERPRISE_PLUS) Edition") and only offers larger performance-optimized
+    # machine types. ENTERPRISE keeps the small tiers available.
+    #
+    # db-g1-small is the smallest tier that supports private IP (db-f1-micro
+    # does not). Sized for a PoC, not for load — production would size from
+    # real traffic and use REGIONAL for HA.
+    edition           = "ENTERPRISE"
+    tier              = "db-g1-small"
+    disk_size         = 10 # GB, the minimum
+    disk_type         = "PD_HDD"
     availability_type = "ZONAL" # single zone — PoC scope; production would use REGIONAL
 
     ip_configuration {
