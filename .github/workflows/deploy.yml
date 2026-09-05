@@ -1,0 +1,57 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # to record the deployed image tag for plan.yml's baseline
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        id: image
+        env:
+          IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/meridian-app/api:${{ steps.vars.outputs.sha_short }}
+        run: |
+          docker build -t "$IMAGE" app/
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: terraform init
+        working-directory: infra
+        run: terraform init
+
+      - name: terraform apply
+        working-directory: infra
+        env:
+          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
+          TF_VAR_container_image: ${{ steps.image.outputs.image }}
+          TF_VAR_git_commit: ${{ steps.vars.outputs.sha_short }}
+        run: terraform apply -input=false -auto-approve
+
+      - name: Record deployed image as the plan-check baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh variable set CURRENT_CONTAINER_IMAGE --body "${{ steps.image.outputs.image }}"

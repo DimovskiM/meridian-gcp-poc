@@ -1,0 +1,38 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/plan.yml"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: terraform init
+        working-directory: infra
+        run: terraform init
+
+      - name: terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
+          # No image built on a plan-only run for a PR — pin to whatever's
+          # currently deployed so the plan reflects real infra drift, not a
+          # spurious app-version diff.
+          TF_VAR_container_image: ${{ vars.CURRENT_CONTAINER_IMAGE }}
+        run: terraform plan -input=false
