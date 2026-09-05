@@ -42,7 +42,7 @@ variable "container_image" {
 }
 
 variable "reviewer_principals" {
-  description = "Read-only access for the Commit review team."
+  description = "Read-only access for the Commit review team. `group:` is correct and verified — GCP rejects `user:` for this address, confirming it is a Workspace group."
   type        = list(string)
   default     = ["group:gcp-devops@comm-it.cloud"]
 }
