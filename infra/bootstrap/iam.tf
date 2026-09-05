@@ -29,6 +29,18 @@ resource "google_project_service" "iam" {
   disable_on_destroy = false
 }
 
+# Enabled here rather than in the main module: Terraform needs this API to
+# read or set a project's IAM policy at all, so the main module cannot
+# bootstrap it for itself. Leaving it to the main module's services.tf failed
+# in CI with "Cloud Resource Manager API has not been used in this project
+# before" while creating the app's cloudsql.client binding — the API
+# enablement and the binding that needs it were racing in the same apply.
+resource "google_project_service" "cloudresourcemanager" {
+  project            = var.project_id
+  service            = "cloudresourcemanager.googleapis.com"
+  disable_on_destroy = false
+}
+
 resource "google_project_service" "iamcredentials" {
   project            = var.project_id
   service            = "iamcredentials.googleapis.com"
@@ -118,6 +130,16 @@ resource "google_project_iam_member" "ci_secret_manager_admin" {
 resource "google_project_iam_member" "ci_run_admin" {
   project = var.project_id
   role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.ci.email}"
+}
+
+# For the Private Services Access peering that gives Cloud SQL its private IP
+# (google_service_networking_connection in the main module's network.tf).
+# roles/editor does not include servicenetworking.services.addPeering, which
+# failed in CI with "Permission denied to add peering".
+resource "google_project_iam_member" "ci_servicenetworking_admin" {
+  project = var.project_id
+  role    = "roles/servicenetworking.networksAdmin"
   member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
