@@ -6,8 +6,11 @@ Postgres, provisioned entirely with Terraform.
 **Live:** https://meridian-api-n53g5ye65a-ey.a.run.app/health
 
 ```json
-{"candidate":"Mihajlo Dimovski","commit":"93802e4","region":"europe-west3","db":"ok","secret":"ok"}
+{"candidate":"Mihajlo Dimovski","commit":"c9dc03e","region":"europe-west3","db":"ok","secret":"ok"}
 ```
+
+`commit` is the SHA of the deployed application image, so it tracks the last
+change under `app/` rather than the newest commit on `main`.
 
 `db` runs a real `SELECT 1` and `secret` checks the Secret Manager–injected
 token on every request; neither is hardcoded.
@@ -67,21 +70,42 @@ rather than passed through infra config, so it travels with the artifact.
 ## Layout
 
 ```
-app/          FastAPI service, Alembic migrations, migrate.py job entrypoint
-infra/        Terraform: VPC, Cloud SQL, secrets, IAM, Cloud Run, registry
-infra/bootstrap/  Applied by hand once: state bucket, CI identity, WIF pool
+app/                FastAPI service, Alembic migrations, migrate.py job entrypoint
+infra/              Terraform: VPC, Cloud SQL, secrets, IAM, Cloud Run, registry
+infra/envs/         Per-region tfvars — copy one to add a region
+infra/bootstrap/    Applied by hand once: state bucket, CI identity, WIF pool
 .github/workflows/  plan (PR), deploy-infra, deploy-app
+README.md           This file
+ASSUMPTIONS.md      Every assumption, and Meridian's clarification reply
+AI-LOG.md           Tool use, what I rejected, what it caught
 ```
 
 ## Running it
 
-Bootstrap once, by a human — it creates the state bucket the main module needs
-and the CI identity that must not manage itself:
+Against **this** project, both modules are already bootstrapped — `terraform
+init` then `apply` works directly in either directory.
+
+Against a **new** project there is a chicken-and-egg step, because a GCS backend
+block cannot take variables: the bucket name is a literal in
+`infra/bootstrap/main.tf`, `infra/bootstrap/backend.tf` and `infra/backend.tf`,
+and GCS bucket names are globally unique. Change that name in all three first,
+then:
 
 ```bash
+# 1. Bootstrap cannot use the bucket it is about to create, so run it on
+#    local state: comment out the backend block, apply, then migrate.
 cd infra/bootstrap
-terraform init && terraform apply -var="project_id=YOUR_PROJECT"
+#    (comment out infra/bootstrap/backend.tf)
+terraform init
+terraform apply -var="project_id=YOUR_PROJECT" -var="github_repository=OWNER/REPO"
+
+#    Restore backend.tf and move the local state into the bucket it created:
+terraform init -migrate-state
 ```
+
+`github_repository` is the security boundary for CI authentication — only OIDC
+tokens from that repository can impersonate the CI service account — so it must
+be set, not left on its default.
 
 Then the main module:
 
@@ -90,6 +114,9 @@ cd infra
 terraform init
 terraform apply -var-file=envs/europe-west3.tfvars -var="third_party_api_token=..."
 ```
+
+The first apply creates the Cloud Run service against a placeholder image;
+`deploy-app.yml` replaces it on the first app deploy.
 
 Adding a region means copying `infra/envs/europe-west3.tfvars`, changing the
 region and CIDRs, and applying with the new file.
