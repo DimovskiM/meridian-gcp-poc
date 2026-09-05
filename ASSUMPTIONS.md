@@ -11,9 +11,31 @@ today, but said "how they get to the database is your call." I built no VPN,
 no bastion, and no tunnel: schema migrations run as a **Cloud Run Job**
 (`infra/cloudrun.tf`, `app/migrate.py`) triggered by the deploy pipeline.
 Developers write a migration file and commit it; nobody needs network access to
-the database at all. This dissolves the tension in the original brief ("must not
-be reachable from the internet" + "developers run migrations from their laptops")
-rather than bridging it.
+the database at all.
+
+This is a deliberate rejection of the workflow as briefed, not just a
+convenience. **Engineers running migrations from their laptops against a
+production payments database is the practice worth removing, independent of how
+they connect.** It means schema changes that are not in version control, not
+reviewed, not repeatable across environments, and not recoverable — plus an
+audit trail that says "someone with a laptop" rather than "this commit, this
+pipeline run, this approver". Solving only the connectivity question (VPN,
+tunnel, bastion) would have preserved all of that. Running migrations as a
+pipeline-triggered job removes the reason to connect at all: the migration is a
+reviewed file in the repo, applied identically everywhere, with the job
+execution as the audit record.
+
+**For the cases a job cannot cover** — incident debugging, a genuine ad-hoc
+query, inspecting production data during an investigation — the answer is *not*
+to reopen laptop access to the database. The GCP-native path is **Cloud SQL Auth
+Proxy over IAP TCP forwarding**: a small bastion instance with no public IP, no
+open SSH port, and no VPN, reachable only through Identity-Aware Proxy. Access
+is granted per-identity via IAM (`roles/iap.tunnelResourceAccessor`) rather than
+by network location, every session is logged, and the proxy authenticates to
+Cloud SQL with IAM credentials over TLS. Not built here — it is a real cost (an
+always-on VM, IAP configuration, an IAM review process) that a three-week
+evaluation does not need, and no such requirement was stated. It is the first
+thing I would add if Meridian says they need break-glass access.
 
 **Region.** `europe-west3` (Frankfurt). Meridian's legal team requires EU only;
 GCP has no Lithuania region. Frankfurt over Warsaw or Finland for latency to the
