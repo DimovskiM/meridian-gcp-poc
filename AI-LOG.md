@@ -161,28 +161,59 @@ missing.
 
 ## 4. Most useful prompt
 
-> ok lets refactor with cloud run. but first evaluate if the requirements
-> sepcify anything. Like what they did in aws before and other things. Also
-> does cloud run need warmup time or?
+The planning brief, given in `/plan` mode before any code existed. It is the
+single prompt that produced the most durable output — roughly 70% of what
+finally shipped came out of the first plan it generated.
 
-Quoted verbatim, typos included. Three things in one instruction: do not start
-refactoring yet, re-read the requirements for anything that constrains the
-choice, and tell me the operational downside of the platform you are about to
-recommend.
+> We're building a production-shaped slice of a GCP environment for a payments
+> customer evaluating a move off AWS. Don't write code yet — I want a plan
+> first.
+>
+> Hard constraints, none of these are negotiable: everything in Terraform with
+> remote state in GCS, nothing created by hand in the console; the Postgres
+> database must not be reachable from the internet under any circumstances;
+> two secrets stored in GCP and read by the app under its own identity; no
+> long-lived credentials anywhere in the repo; a public `/health` returning
+> candidate, deployed commit SHA, region, and live `db` and `secret` checks
+> that must be real per-request checks, not hardcoded.
+>
+> The customer asked for two things I want you to treat as suspect rather than
+> as requirements. They asked for the default VPC "to keep it simple", and they
+> asked for a service account JSON key in a GitHub secret because that's what
+> the rest of their estate does. They also said developers need to run schema
+> migrations from their laptops, against a database that is simultaneously
+> supposed to be unreachable. Their clarification reply defers to us on the VPC
+> and on how developers reach the database, and invites us to deviate on the
+> key if we write down why. Data must stay in the EU — legal requirement — and
+> they may want US customers next year. There is no AWS-to-GCP link today but
+> assume one will be needed later, so don't paint them into a corner on
+> addressing.
+>
+> For each of those three, tell me what you'd build instead and what it costs
+> them, rather than resolving it silently. Where the brief is genuinely
+> ambiguous, say so and mark it as an assumption instead of guessing. Give me
+> the file layout, the build order, and how I'd verify it end to end.
 
-Each part changed the output. The requirements check surfaced that Meridian's
-"we may need to serve US customers later" actively argues against App Engine
-(one app per project, region fixed permanently) — a point neither of us had
-connected to the compute decision. It also surfaced what the brief *never* says:
-what they run on AWS today, which I had not asked in the clarification round and
-which is now recorded as an open assumption rather than quietly assumed away.
-The cold-start question produced the scale-to-zero tradeoff and, following from
-it, the decision to move migrations out of app startup into a Cloud Run Job.
+What survived from that first plan, essentially unchanged: the custom VPC and
+the reasoning for rejecting the default network; `europe-west3`; private-IP
+Cloud SQL over Private Services Access; Secret Manager with per-secret IAM
+rather than project-wide; the separate bootstrap module solving the
+state-bucket chicken-and-egg; a VPC CIDR chosen away from common AWS defaults;
+migrations automated rather than run from laptops, guarded by a Postgres
+advisory lock; FastAPI with Alembic and a small real schema; `terraform plan`
+on PRs; the commit SHA in `/health`; and the README/ASSUMPTIONS/AI-LOG split.
 
-The general lesson: prompts that ask the model to *validate the premise* before
-executing are worth more than prompts that ask it to build the thing well. Left
-to itself it will build the thing well and never mention that the premise was
-wrong.
+What did not survive is the interesting part, and all of it traces to one
+decision the plan inherited from me rather than reasoned about: I specified App
+Engine. That single unexamined input is what later forced the compute rewrite,
+the migration redesign, and the deploy-pipeline restructuring. The plan was
+right about almost everything it was asked to decide, and wrong about the one
+thing it was told.
+
+The lesson I actually took from this: the value of the planning step is
+proportional to how much of the problem you hand it as open. Every constraint I
+supplied as fixed, it optimised around instead of challenging — including the
+one that was wrong.
 
 ## 5. Proportion of AI-generated code
 
