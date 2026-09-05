@@ -29,7 +29,7 @@ jobs:
       - name: terraform plan
         working-directory: infra
         env:
-          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
           TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
           # No image built on a plan-only run for a PR — pin to whatever's
           # currently deployed so the plan reflects real infra drift, not a

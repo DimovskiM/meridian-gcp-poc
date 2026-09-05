@@ -28,7 +28,7 @@ jobs:
       - name: Build and push image
         id: image
         env:
-          IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/meridian-app/api:${{ steps.vars.outputs.sha_short }}
+          IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/meridian-app/api:${{ steps.vars.outputs.sha_short }}
         run: |
           docker build -t "$IMAGE" app/
           docker push "$IMAGE"
@@ -45,7 +45,7 @@ jobs:
       - name: terraform apply
         working-directory: infra
         env:
-          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
           TF_VAR_third_party_api_token: ${{ secrets.THIRD_PARTY_API_TOKEN }}
           TF_VAR_container_image: ${{ steps.image.outputs.image }}
           TF_VAR_git_commit: ${{ steps.vars.outputs.sha_short }}
