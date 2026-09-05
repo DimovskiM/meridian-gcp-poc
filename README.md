@@ -6,7 +6,7 @@ Postgres, provisioned entirely with Terraform.
 **Live:** https://meridian-api-n53g5ye65a-ey.a.run.app/health
 
 ```json
-{"candidate":"Mihajlo Dimovski","commit":"c9dc03e","region":"europe-west3","db":"ok","secret":"ok"}
+{"candidate":"Mihajlo Dimovski","commit":"e700557","region":"europe-west3","db":"ok","secret":"ok"}
 ```
 
 `commit` is the SHA of the deployed application image, so it tracks the last
