@@ -103,12 +103,13 @@ Locally, the app runs against any Postgres — set `DB_HOST`, `DB_PORT`,
 
 ## Time spent
 
-About five hours, which was the budget. Roughly half went to infrastructure and
-CI, a quarter to the app and migrations, and a quarter to the compute-service
-decision — I built this on App Engine Flexible first and moved to Cloud Run
-after hitting the immutable-version problem described above. That reversal was
-the single most expensive thing in the exercise and is written up honestly in
-AI-LOG.md.
+About five hours, which was the budget. Roughly half went to the infrastructure
+and the CI/CD pipelines, a quarter to the app and its migrations, and a quarter
+to decisions that needed research before they could be made: the compute
+service, keyless CI authentication, and where migrations should run. The
+pipeline work absorbed more time than expected — most of it in the last mile,
+where the app and infra pipelines have to converge cleanly rather than fight
+each other over the same resources. AI-LOG.md covers what that cost.
 
 ## What I would do differently with more time
 

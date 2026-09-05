@@ -4,20 +4,23 @@
 
 Claude Code in the terminal, driving the whole build: writing the Terraform and
 the FastAPI app, running `gcloud`/`terraform`/`docker` directly, watching CI
-runs via `gh`, and doing the web research on Cloud Run cold starts, App Engine's
-deploy model, and the current state of service account keys.
+runs via `gh`, and doing the web research on Cloud Run cold starts and scaling
+behaviour, migration patterns for serverless workloads, and the current state of
+service account keys.
 
-Started on **Sonnet 5** and switched to **Opus 5** partway through, during the
-App Engine/Cloud Run problem described below. The switch was a direct response
-to the model producing successive workarounds instead of identifying the
-constraint underneath them.
+Started on **Sonnet 5** and switched to **Opus 5** partway through. The switch
+was a direct response to the model producing successive workarounds around a
+constraint instead of naming the constraint — the deploy-pipeline design
+described below, where it kept generating variants rather than saying which of
+two requirements could not hold at once.
 
 Two workflow features mattered more than the model choice:
 
-- **`/plan`** — forced a written plan before any code. The first plan went to
-  App Engine because I had specified it, which is exactly how the wrong
-  decision got locked in early. Reviewing a plan is much cheaper than reviewing
-  a half-built environment, and it is where I caught scope problems.
+- **`/plan`** — forced a written plan before any code. Reviewing a plan is far
+  cheaper than reviewing a half-built environment, and it is where the scope
+  problems surfaced. Its main limitation is described in section 4: it reasons
+  hard about what you leave open and not at all about what you hand it as
+  fixed.
 - **`/goal`** — kept the session anchored to the exercise's actual deliverables
   across a long build with several reversals. Without it the model drifts
   toward whatever was discussed most recently rather than what still needs
@@ -29,34 +32,63 @@ because I pushed back, not because the first output was correct.
 
 ## 2. Things the AI proposed that I rejected or corrected
 
-### App Engine Flexible, and the design contradiction it produced
+### Workarounds instead of naming a contradiction
 
-I told it to use App Engine. It complied, and then produced four mutually
-contradictory designs in a row when I asked for two things that sounded
-reasonable together: "app config in Terraform" and "app deploys shouldn't run
-`terraform apply`."
+The most expensive correction in the exercise, and the reason I switched models
+mid-build. I asked for two things that sound compatible: the app's configuration
+should live in Terraform, and an app deploy should not run `terraform apply`.
+On some compute services those can both hold; on others they cannot, because
+the deployed unit is immutable and only Terraform can replace it.
 
-What it should have said immediately — and only said when I asked directly what
-the difference between App Engine and Cloud Run was — is that those two
-requirements **cannot both hold on App Engine**. App Engine versions are
-immutable: every deploy creates an entirely new version carrying its full
-config, and `google_app_engine_flexible_app_version` can only be created or
-replaced by Terraform. There is no "update just the image" operation. On Cloud
-Run the service is mutable, so `lifecycle.ignore_changes` on the image plus
-`gcloud run deploy --image` is the canonical pattern.
+Rather than saying which situation we were in, it produced four mutually
+contradictory designs in sequence — repo variables handed between two
+workflows, `-target` applies scoped to a single resource, generating a
+deployment manifest from Terraform, moving config back and forth between the
+two. Each was a workaround for a constraint it had never surfaced, and each
+looked plausible in isolation.
 
-Instead of naming the conflict, it kept generating variants: repo variables
-handed between two workflows, `-target` applies scoped to one resource,
-generating `app.yaml` from Terraform. Each was a workaround for a constraint it
-hadn't surfaced. **This cost the most time of anything in the exercise.** The
-fix was to stop asking for implementations and ask what the platforms actually
-do differently.
+The fix was to stop asking for implementations and ask what the platforms
+actually do differently. Cloud Run's service is a *mutable* resource, so
+`lifecycle.ignore_changes` on the image plus `gcloud run deploy --image` is the
+canonical split, and the requirement I had been asking for is simply the normal
+pattern there. That reframing also surfaced two things nobody had connected to
+the compute decision: one candidate had no Terraform field for internal-only
+instance IPs at all, and its one-application-per-project model with a
+permanently fixed region conflicts directly with Meridian's "we may need to
+serve US customers later."
 
-Switching to Cloud Run also closed a gap it had already flagged but not
-connected: App Engine's Terraform resource has no field for
-`instance_ip_mode`, so instances got public IPs. And App Engine allows one app
-per project with a permanently fixed region, which directly conflicts with
-Meridian's "we may need to serve US customers later."
+**The general failure mode: it will optimise inside a constraint indefinitely
+rather than tell you the constraint is the problem.** It is worth periodically
+asking "is what I'm asking for actually possible here?" rather than "why isn't
+this working?"
+
+### Migrations at application startup
+
+Its first design ran Alembic in the FastAPI startup hook. That works, and I
+shipped it far enough to test it, but it is wrong for a service that scales to
+zero: every cold start pays a database round trip before serving, and a bad
+migration degrades the service itself rather than failing somewhere visible.
+
+Migrations now run as a separate Cloud Run Job before the new revision goes
+live, under a Postgres advisory lock so overlapping executions serialise. A
+failed migration fails the deploy with `--wait` and never touches running
+traffic. This also satisfies a requirement it had solved awkwardly the first
+time — "the app must not die if migrations fail" — by removing the app's
+involvement entirely rather than wrapping the startup hook in a try/except.
+
+### A project-level IAM role the app never needed
+
+It granted the application's service account `roles/cloudsql.client` and
+carried it through several revisions. The app connects over raw TCP to Cloud
+SQL's private IP and authenticates with a Postgres password, so it never calls
+the Cloud SQL Admin API — that role only matters for the Auth Proxy or the
+language connectors, neither of which is in use. It was a leftover from an
+earlier connection design that the model never revisited when the design
+changed.
+
+Removed, and verified by forcing a fresh revision and confirming `/health` still
+reports `db: "ok"`. The application service account now holds **no project-level
+roles at all** — only `secretAccessor` on the two specific secrets it reads.
 
 ### A live Secret Manager API read on a public, unauthenticated endpoint
 
@@ -203,17 +235,27 @@ migrations automated rather than run from laptops, guarded by a Postgres
 advisory lock; FastAPI with Alembic and a small real schema; `terraform plan`
 on PRs; the commit SHA in `/health`; and the README/ASSUMPTIONS/AI-LOG split.
 
-What did not survive is the interesting part, and all of it traces to one
-decision the plan inherited from me rather than reasoned about: I specified App
-Engine. That single unexamined input is what later forced the compute rewrite,
-the migration redesign, and the deploy-pipeline restructuring. The plan was
-right about almost everything it was asked to decide, and wrong about the one
-thing it was told.
+What did not survive is the more interesting part, and it follows a pattern:
+almost every later reversal was something I had handed the plan as fixed rather
+than left open for it to decide.
 
-The lesson I actually took from this: the value of the planning step is
-proportional to how much of the problem you hand it as open. Every constraint I
-supplied as fixed, it optimised around instead of challenging — including the
-one that was wrong.
+The clearest example is the CI credential. I told it to build the service
+account key the way Meridian asked for, and it did — competently, with the key
+in Secret Manager for easy hand-off, and no argument. It only made the case for
+Workload Identity Federation when I stopped instructing and asked it to
+research what current practice actually is; at which point it surfaced that
+Google is retiring service account keys via organization policy defaults, that
+`google_service_account_key` writes private key material into Terraform state,
+and that the exercise's own "no long-lived credentials" line makes the key a
+requirement violation rather than a preference. All of that was available on the
+first pass. None of it came out while I was giving instructions.
+
+The same shape repeats: where I described a problem, the plan reasoned about it
+and was usually right. Where I specified a solution, it implemented that
+solution and stopped thinking. **The value of the planning step is proportional
+to how much of the problem you hand it as open** — a constraint stated as fixed
+is a constraint it will optimise around rather than question, including when the
+constraint is the thing that is wrong.
 
 ## 5. Proportion of AI-generated code
 
