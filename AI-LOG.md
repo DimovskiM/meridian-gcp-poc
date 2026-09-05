@@ -162,15 +162,6 @@ scaling {
 
 `terraform plan` now reports no changes.
 
-### Guessed API field names
-
-It wrote `instance_ip_mode` on `google_app_engine_flexible_app_version`. The
-field does not exist there. It type-checked in its head and failed on
-`terraform validate`. After that I made it query the provider schema
-(`terraform providers schema -json`) before writing any non-obvious resource,
-which caught the correct shape of `env.value_source.secret_key_ref` and the
-`manual_scaling` requirement without another round trip.
-
 ## 3. What the AI caught that I would have missed
 
 Two things.
