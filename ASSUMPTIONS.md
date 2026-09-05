@@ -92,11 +92,48 @@ open to `0.0.0.0/0`), which contradicts their own "auditors are strict" and
 "reflect the production target" framing. Custom VPCs default-deny all ingress.
 
 **AWS ↔ GCP connectivity.** Not built, per instruction ("do not build it now,
-just do not leave us somewhere we cannot get out of later"). The VPC CIDR is
-`10.60.0.0/16`, deliberately away from the common AWS defaults (`10.0.0.0/16`,
-`172.31.0.0/16`) to reduce the chance of an overlap that would block a future
-VPN or Interconnect. **This is a guess** — I never learned their real AWS CIDR
-and would confirm before building any link.
+just do not leave us somewhere we cannot get out of later").
+
+The only decision that had to be made now is addressing, because it is the one
+thing that cannot be fixed later without rebuilding the VPC. The CIDR is
+`10.60.0.0/16`, chosen away from the common AWS defaults (`10.0.0.0/16`,
+`172.31.0.0/16`) so a future link does not land on overlapping ranges — with
+overlap, no amount of routing configuration helps and one side has to be
+renumbered. **This is a guess**: I never learned their real AWS CIDR, and
+confirming it is the first thing I would do before building any link.
+
+When they do need it, there are three options, in increasing order of cost and
+capability:
+
+- **HA VPN to an AWS Virtual Private Gateway or Transit Gateway** — the normal
+  answer, and almost certainly right for a period of side-by-side running. Two
+  tunnels over the public internet with IPsec, a Cloud Router doing BGP for
+  dynamic route exchange, and Google's 99.99% SLA when configured with two
+  interfaces. Roughly $72/month for the GCP tunnels plus AWS's own hourly and
+  egress charges. Worth pinning the crypto explicitly on both sides
+  (AES-256-GCM, SHA-256, DH group 19 or higher) and matching BGP keepalive
+  timers, since mismatches there are the usual cause of tunnels that come up
+  and then flap.
+- **Cross-Cloud Interconnect** — a dedicated private circuit to AWS rather than
+  encrypted traffic over the internet. Higher bandwidth, lower and more
+  predictable latency, stronger SLA, and no shared-internet path, which matters
+  if payment data is going to cross that link continuously rather than during a
+  migration window. Materially more expensive and slower to provision.
+- **Network Connectivity Center** — worth raising now rather than later,
+  because it is an architectural choice and not just a bigger pipe. NCC is a
+  hub-and-spoke model where each VPC, VPN, or Interconnect attachment is a
+  spoke on a central hub, so route exchange is managed in one place instead of
+  as a mesh of per-pair peerings. Meridian's own description — "a period where
+  both estates run side by side", plus possible US expansion — is exactly the
+  shape that turns into an unmanageable mesh: EU VPC, US VPC, AWS, and whatever
+  else, each needing to reach the others, with VPC peering being
+  non-transitive. NCC also supports import/export route filters per spoke, so
+  the AWS estate can be given a route to specific subnets rather than to
+  everything.
+
+None of this is built, and none of it should be for a three-week evaluation.
+The point is that the choice stays open: nothing here assumes a flat single-VPC
+world, and the addressing leaves room for all three.
 
 ## Decisions Meridian did not weigh in on
 
