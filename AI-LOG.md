@@ -2,10 +2,26 @@
 
 ## 1. Tools used
 
-Claude Code (Sonnet 5) in the terminal, driving the whole build: writing the
-Terraform and the FastAPI app, running `gcloud`/`terraform`/`docker` directly,
-watching CI runs via `gh`, and doing the web research on Cloud Run cold starts,
-App Engine's deploy model, and the current state of service account keys.
+Claude Code in the terminal, driving the whole build: writing the Terraform and
+the FastAPI app, running `gcloud`/`terraform`/`docker` directly, watching CI
+runs via `gh`, and doing the web research on Cloud Run cold starts, App Engine's
+deploy model, and the current state of service account keys.
+
+Started on **Sonnet 5** and switched to **Opus 5** partway through, during the
+App Engine/Cloud Run problem described below. The switch was a direct response
+to the model producing successive workarounds instead of identifying the
+constraint underneath them.
+
+Two workflow features mattered more than the model choice:
+
+- **`/plan`** — forced a written plan before any code. The first plan went to
+  App Engine because I had specified it, which is exactly how the wrong
+  decision got locked in early. Reviewing a plan is much cheaper than reviewing
+  a half-built environment, and it is where I caught scope problems.
+- **`/goal`** — kept the session anchored to the exercise's actual deliverables
+  across a long build with several reversals. Without it the model drifts
+  toward whatever was discussed most recently rather than what still needs
+  finishing.
 
 Roughly a 50/50 split between me directing architecture and the model producing
 code. Every architectural decision below that went the right way went that way
@@ -88,6 +104,32 @@ with the narrow roles matching the bindings this config actually makes:
 `resourcemanager.projectIamAdmin`, `secretmanager.admin`, `run.admin`, and
 `servicenetworking.networksAdmin`.
 
+### `ignore_changes` used to paper over drift it had not diagnosed
+
+After the final apply, `terraform plan` still reported a pending change: a
+service-level `scaling` block being removed. Its fix was to add `scaling` to
+`lifecycle.ignore_changes` with a confident explanation that the API populates
+the block on create.
+
+That explanation was a guess, and `ignore_changes` on a block nobody had
+investigated is exactly how real drift gets hidden later. Querying the Cloud Run
+**v2** API directly (`gcloud run services describe` returns the older knative
+shape and shows nothing here) and dumping the provider schema showed the actual
+cause: the service-level `scaling` block has no `max_instance_count` field at
+all, and the provider writes it into state with zero-valued defaults on create
+regardless of whether the config declares it. Omitting it therefore guarantees a
+permanent diff.
+
+The fix is one declared block at its real default, not a suppression:
+
+```hcl
+scaling {
+  min_instance_count = 0
+}
+```
+
+`terraform plan` now reports no changes.
+
 ### Guessed API field names
 
 It wrote `instance_ip_mode` on `google_app_engine_flexible_app_version`. The
@@ -119,14 +161,28 @@ missing.
 
 ## 4. Most useful prompt
 
-> hold up bro. this doesnt make much sense. Whats the difference between app
-> engine and cloud run?
+> ok lets refactor with cloud run. but first evaluate if the requirements
+> sepcify anything. Like what they did in aws before and other things. Also
+> does cloud run need warmup time or?
 
-Every implementation-level prompt before this produced another contradictory
-workaround. Asking the model to explain the platforms instead of write code got
-it to state the constraint it had been designing around for an hour — that App
-Engine's immutable versions make "config in Terraform, image deployed by gcloud"
-impossible — and the right architecture fell out immediately.
+Quoted verbatim, typos included. Three things in one instruction: do not start
+refactoring yet, re-read the requirements for anything that constrains the
+choice, and tell me the operational downside of the platform you are about to
+recommend.
+
+Each part changed the output. The requirements check surfaced that Meridian's
+"we may need to serve US customers later" actively argues against App Engine
+(one app per project, region fixed permanently) — a point neither of us had
+connected to the compute decision. It also surfaced what the brief *never* says:
+what they run on AWS today, which I had not asked in the clarification round and
+which is now recorded as an open assumption rather than quietly assumed away.
+The cold-start question produced the scale-to-zero tradeoff and, following from
+it, the decision to move migrations out of app startup into a Cloud Run Job.
+
+The general lesson: prompts that ask the model to *validate the premise* before
+executing are worth more than prompts that ask it to build the thing well. Left
+to itself it will build the thing well and never mention that the premise was
+wrong.
 
 ## 5. Proportion of AI-generated code
 

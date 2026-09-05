@@ -21,6 +21,14 @@ resource "google_cloud_run_v2_service" "api" {
   ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
 
+  # Service-wide scaling floor, distinct from template.scaling below (which is
+  # per-revision). Declared explicitly at its default rather than omitted: the
+  # provider writes this block into state on create either way, so omitting it
+  # makes every subsequent plan propose removing it.
+  scaling {
+    min_instance_count = 0
+  }
+
   template {
     service_account = google_service_account.app.email
 
