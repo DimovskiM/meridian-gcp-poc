@@ -4,12 +4,6 @@ resource "google_service_account" "app" {
   display_name = "Meridian API runtime identity"
 }
 
-resource "google_project_iam_member" "app_cloudsql_client" {
-  project = var.project_id
-  role    = "roles/cloudsql.client"
-  member  = "serviceAccount:${google_service_account.app.email}"
-}
-
 # Read-only access for the Commit reviewers.
 #
 # Caveat worth knowing before granting: roles/viewer includes storage read

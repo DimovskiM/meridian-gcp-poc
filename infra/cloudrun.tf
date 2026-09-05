@@ -107,7 +107,6 @@ resource "google_cloud_run_v2_service" "api" {
 
   depends_on = [
     google_project_service.apis,
-    google_project_iam_member.app_cloudsql_client,
     google_secret_manager_secret_iam_member.app_reads_db_password,
     google_secret_manager_secret_iam_member.app_reads_third_party_token,
   ]
@@ -183,7 +182,6 @@ resource "google_cloud_run_v2_job" "migrate" {
 
   depends_on = [
     google_project_service.apis,
-    google_project_iam_member.app_cloudsql_client,
     google_secret_manager_secret_iam_member.app_reads_db_password,
   ]
 }

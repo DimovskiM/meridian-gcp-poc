@@ -106,6 +106,45 @@ to ECS Fargate, the most common shape for a containerized API service on AWS, so
 it is a defensible target — but if they are on EKS, GKE would be the more honest
 "production target" and I would revisit.
 
+**The database uses password authentication, and the app holds no project-level
+IAM roles at all.** The app connects over raw TCP to Cloud SQL's private IP via
+Direct VPC egress and authenticates with a Postgres password from Secret
+Manager. It therefore does *not* need `roles/cloudsql.client` — that role grants
+`cloudsql.instances.connect`/`get`, which are consumed by the Cloud SQL Auth
+Proxy and the language connectors, both of which call the Cloud SQL Admin API.
+We use neither. The role was in an earlier revision of this config as a leftover
+from a design that assumed the Auth Proxy; it has been removed and the removal
+verified by forcing a fresh revision and confirming `/health` still reports
+`db: "ok"`. The app's service account now holds no project-level roles — only
+`secretAccessor` on the two specific secrets it reads.
+
+**For production I would switch to Cloud SQL IAM database authentication**,
+which reverses that: `roles/cloudsql.client` becomes genuinely required, and in
+exchange the database password stops existing. The app authenticates as its own
+service account using short-lived OAuth tokens, `db-password` and its Secret
+Manager entry disappear, and with them the rotation problem, the plaintext copy
+in Terraform state, and the fact that project Viewer can read it. The cost is a
+dependency on the Cloud SQL Python connector and a change to how both the
+service and the migration job open connections — not worth it inside this
+exercise's budget, but the right end state.
+
+**IAM database authentication also covers human access, which makes it the
+better answer to Meridian's original question.** Cloud SQL supports
+`CLOUD_IAM_USER` for individual Google accounts and `CLOUD_IAM_GROUP` for
+groups, alongside service accounts. A developer connects as *themselves* using
+their own `gcloud` credentials — there is no shared `meridian_app` password to
+distribute, rotate after someone leaves, or find pasted in a chat log. Access is
+granted and revoked through IAM or group membership, and every session is
+attributable to a named person in the audit log rather than to a shared
+account.
+
+Combined with the IAP bastion path described above, that is the full production
+shape for break-glass access: IAP TCP forwarding for the network path (no VPN,
+no public IP, IAM-gated), the Cloud SQL Auth Proxy for transport, and IAM
+database authentication for identity — per-human, passwordless, and audited end
+to end. Not built here for the same reason as the bastion: no such requirement
+was stated, and the job-based migration flow removes the day-to-day need.
+
 **Migrations run as a job, not at app startup.** An earlier version ran Alembic
 in the FastAPI startup hook. On Cloud Run with scale-to-zero that would put a
 database round trip in front of every cold start, and a bad migration would
