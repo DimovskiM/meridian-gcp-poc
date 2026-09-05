@@ -2,7 +2,7 @@
 # is hardcoded here — it's the bucket infra/bootstrap created.
 terraform {
   backend "gcs" {
-    bucket = "meridian-payments-poc-tf-state"
+    bucket = "meridian-payments-tfstate"
     prefix = "terraform/state"
   }
 }

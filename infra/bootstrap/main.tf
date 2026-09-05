@@ -20,7 +20,7 @@ resource "google_project_service" "storage" {
 }
 
 resource "google_storage_bucket" "tf_state" {
-  name                        = "${var.project_id}-tf-state"
+  name                        = "meridian-payments-tfstate"
   location                    = var.region
   project                     = var.project_id
   force_destroy               = false
