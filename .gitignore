@@ -3,6 +3,9 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+# Per-region/environment tfvars under infra/envs/ hold no secrets (project
+# id, region, CIDRs) and are committed deliberately — see infra/envs/.
+!infra/envs/*.tfvars
 !*.tfvars.example
 crash.log
 crash.*.log
