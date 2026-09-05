@@ -102,7 +102,14 @@ resource "google_cloud_run_v2_service" "api" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].containers[0].image]
+    ignore_changes = [
+      template[0].containers[0].image,
+      # `gcloud run deploy` stamps these metadata fields on every app deploy.
+      # Without ignoring them, each deploy leaves drift for the next infra plan
+      # to propose reverting — noise that would eventually mask a real change.
+      client,
+      client_version,
+    ]
   }
 
   depends_on = [
