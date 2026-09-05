@@ -1,24 +1,22 @@
 variable "project_id" {
-  description = "GCP project ID"
-  type        = string
+  type = string
 }
 
 variable "region" {
-  description = "GCP region — EU-only per Meridian's legal requirement (payment data). Frankfurt: EU, good latency for the German customer base and reasonable for Lithuania."
+  description = "EU-only per Meridian's legal requirement. Frankfurt for latency to the German customer base."
   type        = string
   default     = "europe-west3"
 }
 
 variable "vpc_cidr" {
-  description = "Custom VPC CIDR. Deliberately away from common AWS defaults (10.0.0.0/16, 172.31.0.0/16) to reduce collision odds with Meridian's real AWS CIDR ahead of any future VPN/Interconnect — unverified, flagged in ASSUMPTIONS.md."
+  description = "Kept away from common AWS defaults (10.0.0.0/16, 172.31.0.0/16) so a future VPN/Interconnect to Meridian's AWS estate has room. Their real CIDR is unknown — see ASSUMPTIONS.md."
   type        = string
   default     = "10.60.0.0/16"
 }
 
 variable "app_subnet_cidr" {
-  description = "Subnet for the App Engine flexible instances."
-  type        = string
-  default     = "10.60.1.0/24"
+  type    = string
+  default = "10.60.1.0/24"
 }
 
 variable "db_name" {
@@ -32,13 +30,19 @@ variable "db_user" {
 }
 
 variable "third_party_api_token" {
-  description = "Stand-in for a real credential Meridian would provide for their third-party provider. Supplied at apply time (TF_VAR_third_party_api_token), never committed."
+  description = "Stand-in for a credential Meridian would provide. Passed at apply time, never committed."
   type        = string
   sensitive   = true
 }
 
 variable "container_image" {
-  description = "Image used only when Terraform first creates the service and job — after that, `gcloud run deploy` owns the image and Terraform ignores changes to it (see cloudrun.tf). Defaults to Google's hello container so a from-scratch `terraform apply` works before any app image has been built."
+  description = "Only used when Terraform first creates the service and job; `gcloud run deploy` owns the image afterwards and Terraform ignores changes to it."
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "reviewer_principals" {
+  description = "Read-only access for the Commit review team."
+  type        = list(string)
+  default     = ["group:gcp-devops@comm-it.cloud"]
 }

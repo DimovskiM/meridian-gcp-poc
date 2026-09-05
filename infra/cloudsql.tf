@@ -3,31 +3,26 @@ resource "google_sql_database_instance" "postgres" {
   name                = "meridian-postgres"
   region              = var.region
   database_version    = "POSTGRES_16"
-  deletion_protection = false # PoC: this environment is torn down after review
+  deletion_protection = false # torn down after review
 
   settings {
-    # Edition pinned explicitly: Postgres 16 now defaults to ENTERPRISE_PLUS,
-    # which rejects custom/shared-core tiers ("Invalid Tier for
-    # (ENTERPRISE_PLUS) Edition") and only offers larger performance-optimized
-    # machine types. ENTERPRISE keeps the small tiers available.
-    #
-    # db-g1-small is the smallest tier that supports private IP (db-f1-micro
-    # does not). Sized for a PoC, not for load — production would size from
-    # real traffic and use REGIONAL for HA.
+    # Postgres 16 defaults to ENTERPRISE_PLUS, which rejects shared-core tiers;
+    # ENTERPRISE keeps db-g1-small available (the smallest supporting private
+    # IP). PoC sizing — production would size from traffic and use REGIONAL.
     edition           = "ENTERPRISE"
     tier              = "db-g1-small"
     disk_size         = 10 # GB, the minimum
     disk_type         = "PD_HDD"
-    availability_type = "ZONAL" # single zone — PoC scope; production would use REGIONAL
+    availability_type = "ZONAL"
 
     ip_configuration {
-      ipv4_enabled                                 = false # no public IP, ever
+      ipv4_enabled                                 = false
       private_network                              = google_compute_network.vpc.id
       enable_private_path_for_google_cloud_services = true
     }
 
     backup_configuration {
-      enabled = false # PoC scope — production would enable this
+      enabled = false # production would enable
     }
   }
 

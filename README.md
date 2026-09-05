@@ -1,0 +1,135 @@
+# Meridian Payments — GCP proof of concept
+
+A containerized HTTP API on Cloud Run talking to a private-IP Cloud SQL
+Postgres, provisioned entirely with Terraform.
+
+**Live:** https://meridian-api-n53g5ye65a-ey.a.run.app/health
+
+```json
+{"candidate":"Mihajlo Dimovski","commit":"93802e4","region":"europe-west3","db":"ok","secret":"ok"}
+```
+
+`db` runs a real `SELECT 1` and `secret` checks the Secret Manager–injected
+token on every request; neither is hardcoded.
+
+## Architecture
+
+```
+GitHub Actions ──(OIDC, no keys)──> Cloud Run ──(Direct VPC egress)──┐
+                                     meridian-api                     │
+                                        │ startup probe /health       │
+                                        ▼                             ▼
+                                  Secret Manager            Cloud SQL Postgres
+                                  db-password                private IP only
+                                  third-party-api-token      10.156.80.3
+                                                                      ▲
+                                  Cloud Run Job ──────────────────────┘
+                                  meridian-migrate (alembic upgrade head)
+```
+
+Custom VPC (`10.60.0.0/16`), Cloud SQL reachable only via Private Services
+Access peering. The database has no public IP (`ipv4Enabled = false`).
+
+## Decisions
+
+**Cloud Run over App Engine / GKE.** A Cloud Run service is a *mutable*
+resource, so Terraform owns the whole configuration — env vars, VPC egress,
+service account, scaling, probes — while `gcloud run deploy --image` changes
+only the image per deploy, with `lifecycle.ignore_changes` keeping the two from
+fighting. App Engine Flexible cannot express that split: its versions are
+immutable, so every deploy recreates the whole version through Terraform. App
+Engine also permits one application per project with a region fixed forever,
+which would make Meridian's "serve US customers later" a new project. GKE is
+more machinery than one service justifies.
+
+**Migrations as a Cloud Run Job, not from laptops.** Meridian asked for
+developers to run migrations from their machines. Migrations run in the deploy
+pipeline instead (`app/migrate.py`), under a Postgres advisory lock, before the
+new revision goes live. Nobody needs network access to the database. The
+practice worth removing was unversioned, unreviewed schema changes — not just
+the connectivity. See ASSUMPTIONS.md, including the IAP-bastion path if they
+need genuine break-glass access.
+
+**Workload Identity Federation, not the service account key Meridian asked
+for.** GitHub's OIDC token is exchanged for a short-lived GCP token per run.
+The exercise requires no long-lived credentials; Google is retiring SA keys via
+org policy defaults; and `google_service_account_key` writes private key
+material into Terraform state. Deviation and its cost recorded in
+ASSUMPTIONS.md.
+
+**Custom VPC, not the default network.** Objected to in the clarification round
+and Meridian deferred. The default network ships with SSH/RDP/ICMP open to
+`0.0.0.0/0`, which contradicts their own "auditors are strict" framing.
+
+**Commit SHA baked into the image at build time** (`--build-arg GIT_COMMIT`)
+rather than passed through infra config, so it travels with the artifact.
+
+## Layout
+
+```
+app/          FastAPI service, Alembic migrations, migrate.py job entrypoint
+infra/        Terraform: VPC, Cloud SQL, secrets, IAM, Cloud Run, registry
+infra/bootstrap/  Applied by hand once: state bucket, CI identity, WIF pool
+.github/workflows/  plan (PR), deploy-infra, deploy-app
+```
+
+## Running it
+
+Bootstrap once, by a human — it creates the state bucket the main module needs
+and the CI identity that must not manage itself:
+
+```bash
+cd infra/bootstrap
+terraform init && terraform apply -var="project_id=YOUR_PROJECT"
+```
+
+Then the main module:
+
+```bash
+cd infra
+terraform init
+terraform apply -var-file=envs/europe-west3.tfvars -var="third_party_api_token=..."
+```
+
+Adding a region means copying `infra/envs/europe-west3.tfvars`, changing the
+region and CIDRs, and applying with the new file.
+
+CI needs repo variables `GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
+`CI_SERVICE_ACCOUNT` and one secret, `THIRD_PARTY_API_TOKEN`. All three
+workflows also run on `workflow_dispatch`.
+
+Locally, the app runs against any Postgres — set `DB_HOST`, `DB_PORT`,
+`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `THIRD_PARTY_API_TOKEN`, `REGION`.
+
+## Time spent
+
+About five hours, which was the budget. Roughly half went to infrastructure and
+CI, a quarter to the app and migrations, and a quarter to the compute-service
+decision — I built this on App Engine Flexible first and moved to Cloud Run
+after hitting the immutable-version problem described above. That reversal was
+the single most expensive thing in the exercise and is written up honestly in
+AI-LOG.md.
+
+## What I would do differently with more time
+
+- **Front the service with a load balancer and Cloud Armor.** Right now
+  `run.invoker` is granted to `allUsers` because the exercise requires a public
+  `/health`. Production wants `ingress = INTERNAL_AND_CLOUD_LOAD_BALANCING`,
+  WAF rules, and rate limiting — the last of which also caps the cost surface
+  on an unauthenticated endpoint.
+- **Move the Terraform state bucket to a separate project.** Project Viewer
+  includes storage read access, and state holds the generated database password
+  in plaintext — so granting reviewers Viewer also grants them that password.
+  Separating the projects breaks that link.
+- **Cloud SQL: `REGIONAL`, backups, PITR, and CMEK.** All disabled here for a
+  three-week PoC. A payments company will likely require customer-managed keys;
+  I did not spend a clarification question on it.
+- **Secret rotation.** `db-password` is generated once and never rotated.
+- **Monitoring.** No uptime check, no alert policy, no SLO, no log-based
+  metrics.
+- **Tests.** The app has no automated tests; correctness was verified by
+  running the container against a real Postgres and exercising the failure
+  paths by hand.
+
+ASSUMPTIONS.md records every assumption and open question. AI-LOG.md covers
+tool use, what I rejected, and what the AI caught that I would have missed.

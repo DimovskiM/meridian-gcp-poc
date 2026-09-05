@@ -1,6 +1,6 @@
 resource "random_password" "db_password" {
   length  = 24
-  special = false # avoid characters that need escaping in a DB connection URL
+  special = false # avoids escaping in the DB connection URL
 }
 
 resource "google_secret_manager_secret" "db_password" {
@@ -19,7 +19,7 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data = random_password.db_password.result
 }
 
-# Stand-in for a real third-party provider credential Meridian would supply.
+# Stand-in for a credential Meridian would supply.
 resource "google_secret_manager_secret" "third_party_token" {
   project   = var.project_id
   secret_id = "third-party-api-token"
@@ -36,8 +36,7 @@ resource "google_secret_manager_secret_version" "third_party_token" {
   secret_data = var.third_party_api_token
 }
 
-# Least privilege: the app's identity can read exactly these two secrets,
-# nothing project-wide.
+# Scoped per-secret, not project-wide.
 resource "google_secret_manager_secret_iam_member" "app_reads_db_password" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.db_password.secret_id

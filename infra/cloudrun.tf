@@ -1,6 +1,6 @@
 locals {
-  # Shared by the service and the migration job — both run the same image and
-  # need the same connection details.
+  # GIT_COMMIT is absent by design — baked into the image at build time
+  # (app/Dockerfile) so it travels with the artifact.
   app_env = {
     GCP_PROJECT = var.project_id
     DB_HOST     = google_sql_database_instance.postgres.private_ip_address
@@ -8,21 +8,12 @@ locals {
     DB_NAME     = var.db_name
     DB_USER     = var.db_user
     REGION      = var.region
-    # GIT_COMMIT is deliberately absent — it's baked into the image at build
-    # time (app/Dockerfile) so it travels with the artifact.
   }
 }
 
-# The API service.
-#
-# Terraform owns the whole configuration — env vars, VPC egress, runtime
-# identity, scaling, probes. The one field it does NOT own is the image:
-# `gcloud run deploy --image` updates that on every app deploy, and the
-# lifecycle block below stops Terraform from reverting it. This is the split
-# that App Engine couldn't express: its versions are immutable, so any change
-# meant recreating the whole version through Terraform. A Cloud Run service
-# is a mutable resource, so config-in-Terraform and image-updated-by-gcloud
-# coexist cleanly.
+# Terraform owns every field except the image, which `gcloud run deploy` sets
+# per app deploy (see the lifecycle block). A Cloud Run service is mutable, so
+# the two coexist; App Engine's immutable versions could not express this.
 resource "google_cloud_run_v2_service" "api" {
   project             = var.project_id
   name                = "meridian-api"
@@ -33,17 +24,14 @@ resource "google_cloud_run_v2_service" "api" {
   template {
     service_account = google_service_account.app.email
 
-    # Scale to zero: nothing runs (and nothing bills) when idle. Trade-off is
-    # a ~1-3s cold start on the first request after an idle period; requests
-    # pend rather than fail. For a production payments API we'd set
-    # min_instance_count = 1 with startup CPU boost instead.
+    # Costs nothing idle, at the price of a ~1-3s cold start. Production would
+    # use min_instance_count = 1 with startup CPU boost.
     scaling {
       min_instance_count = 0
       max_instance_count = 3
     }
 
-    # Direct VPC egress — no connector VM to run or pay for. This is what
-    # gives the service a route to Cloud SQL's private IP.
+    # Direct VPC egress: the route to Cloud SQL's private IP, no connector VM.
     vpc_access {
       network_interfaces {
         network    = google_compute_network.vpc.id
@@ -59,16 +47,12 @@ resource "google_cloud_run_v2_service" "api" {
         container_port = 8080
       }
 
-      # Smallest viable: 1 vCPU is the floor for a service that isn't using
-      # CPU throttling tricks, and 512Mi comfortably holds FastAPI plus a
-      # small SQLAlchemy pool. Scale-to-zero means this costs nothing at idle
-      # regardless.
       resources {
         limits = {
           cpu    = "1"
           memory = "512Mi"
         }
-        cpu_idle = true # don't bill for CPU between requests
+        cpu_idle = true
       }
 
       dynamic "env" {
@@ -79,10 +63,8 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
-      # Both secrets are injected by Cloud Run from Secret Manager at instance
-      # start, under this service's own identity — the values never pass
-      # through Terraform state or the deploy pipeline, and application code
-      # never calls the Secret Manager API itself.
+      # Injected by Cloud Run under this service's identity: the values never
+      # reach Terraform state or the deploy pipeline.
       env {
         name = "DB_PASSWORD"
         value_source {
@@ -112,7 +94,6 @@ resource "google_cloud_run_v2_service" "api" {
   }
 
   lifecycle {
-    # Owned by `gcloud run deploy` in .github/workflows/deploy-app.yml.
     ignore_changes = [template[0].containers[0].image]
   }
 
@@ -124,11 +105,9 @@ resource "google_cloud_run_v2_service" "api" {
   ]
 }
 
-# The exercise requires /health on a public URL, so the service is invokable
-# unauthenticated. Note this exposes only the API itself — the database stays
-# unreachable from the internet, which is the actual stated constraint. A real
-# deployment would put Cloud Armor / an external load balancer in front and
-# authenticate anything beyond a health endpoint.
+# Unauthenticated because the exercise requires /health on a public URL. Only
+# the API is exposed; the database has no public IP. Production would front
+# this with a load balancer and Cloud Armor, and authenticate everything else.
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   project  = var.project_id
   location = var.region
@@ -137,12 +116,8 @@ resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   member   = "allUsers"
 }
 
-# Migrations run here, not at app startup.
-#
-# Decoupling them from the service means a cold start never pays for a
-# migration check, and a bad migration surfaces as a visibly failed job
-# execution instead of a degraded or crash-looping service. Same image as the
-# service, different entrypoint.
+# Migrations run here rather than at app startup, so cold starts stay fast and
+# a bad migration fails the deploy visibly instead of degrading the service.
 resource "google_cloud_run_v2_job" "migrate" {
   project             = var.project_id
   name                = "meridian-migrate"
@@ -166,7 +141,6 @@ resource "google_cloud_run_v2_job" "migrate" {
         image   = var.container_image
         command = ["python", "migrate.py"]
 
-        # Migrations are short and not CPU-bound; the floor is plenty.
         resources {
           limits = {
             cpu    = "1"
@@ -182,8 +156,6 @@ resource "google_cloud_run_v2_job" "migrate" {
           }
         }
 
-        # Same injection as the service — the job connects to the same
-        # database. It doesn't need the third-party token at all.
         env {
           name = "DB_PASSWORD"
           value_source {
@@ -198,7 +170,6 @@ resource "google_cloud_run_v2_job" "migrate" {
   }
 
   lifecycle {
-    # Same as the service: the deploy workflow points this at the new image.
     ignore_changes = [template[0].template[0].containers[0].image]
   }
 
