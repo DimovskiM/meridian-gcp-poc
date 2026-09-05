@@ -150,13 +150,7 @@ Locally, the app runs against any Postgres — set `DB_HOST`, `DB_PORT`,
 
 ## Time spent
 
-About five hours, which was the budget. Roughly half went to the infrastructure
-and the CI/CD pipelines, a quarter to the app and its migrations, and a quarter
-to decisions that needed research before they could be made: the compute
-service, keyless CI authentication, and where migrations should run. The
-pipeline work absorbed more time than expected — most of it in the last mile,
-where the app and infra pipelines have to converge cleanly rather than fight
-each other over the same resources. AI-LOG.md covers what that cost.
+Around 4 hours 45 minutes.
 
 ## What I would do differently with more time
 
