@@ -12,9 +12,8 @@ CANDIDATE_NAME = "Mihajlo Dimovski"
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
 REGION = os.environ.get("REGION", "unknown")
 
-# No migrations here — they run as a separate Cloud Run Job (app/migrate.py,
-# infra/cloudrun.tf) before a new revision goes live. Keeping them out of
-# startup means cold starts stay fast and a failed migration can never take
+# Migrations run as a separate Cloud Run Job (app/migrate.py) before a new
+# revision goes live, so cold starts stay fast and a bad migration cannot take
 # the service down.
 app = FastAPI()
 

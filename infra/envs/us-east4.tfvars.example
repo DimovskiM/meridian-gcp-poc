@@ -1,0 +1,25 @@
+# Template for a second region — Meridian's "we may need to serve US customers
+# later". Not applied; committed as `.example` so it cannot be run by accident.
+#
+# To use it: drop the .example suffix, set project_id, and apply with
+#   terraform apply -var-file=envs/us-east4.tfvars
+#
+# Each region is a separate Terraform state (use a distinct backend prefix), so
+# regions can be added, changed and destroyed independently.
+#
+# The CIDRs must not overlap europe-west3's 10.60.0.0/16, or any range in
+# Meridian's AWS estate. Overlapping ranges cannot be fixed later without
+# rebuilding the VPC — this is the one value here that is expensive to get
+# wrong, because the brief says a link between the two estates will eventually
+# be needed.
+#
+# Note this only moves compute and data into the region. Serving US traffic
+# properly also needs a global load balancer in front of both regions, and a
+# decision about whether EU customer data may be replicated there at all —
+# Meridian's legal team said payment data stays in the EU, so a US region is
+# likely a separate data domain rather than a replica.
+
+project_id      = "CHANGE_ME"
+region          = "us-east4"
+vpc_cidr        = "10.70.0.0/16"
+app_subnet_cidr = "10.70.1.0/24"

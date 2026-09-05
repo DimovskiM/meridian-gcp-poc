@@ -2,18 +2,16 @@ locals {
   # GIT_COMMIT is absent by design — baked into the image at build time
   # (app/Dockerfile) so it travels with the artifact.
   app_env = {
-    GCP_PROJECT = var.project_id
-    DB_HOST     = google_sql_database_instance.postgres.private_ip_address
-    DB_PORT     = "5432"
-    DB_NAME     = var.db_name
-    DB_USER     = var.db_user
-    REGION      = var.region
+    DB_HOST = google_sql_database_instance.postgres.private_ip_address
+    DB_PORT = "5432"
+    DB_NAME = var.db_name
+    DB_USER = var.db_user
+    REGION  = var.region
   }
 }
 
 # Terraform owns every field except the image, which `gcloud run deploy` sets
-# per app deploy (see the lifecycle block). A Cloud Run service is mutable, so
-# the two coexist; App Engine's immutable versions could not express this.
+# per app deploy — see the lifecycle block.
 resource "google_cloud_run_v2_service" "api" {
   project             = var.project_id
   name                = "meridian-api"
@@ -21,10 +19,9 @@ resource "google_cloud_run_v2_service" "api" {
   ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
 
-  # Service-wide scaling floor, distinct from template.scaling below (which is
-  # per-revision). Declared explicitly at its default rather than omitted: the
-  # provider writes this block into state on create either way, so omitting it
-  # makes every subsequent plan propose removing it.
+  # Distinct from template.scaling below. Declared at its default rather than
+  # omitted: the provider writes it into state on create either way, so leaving
+  # it out makes every later plan propose removing it.
   scaling {
     min_instance_count = 0
   }
@@ -71,8 +68,7 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
-      # Injected by Cloud Run under this service's identity: the values never
-      # reach Terraform state or the deploy pipeline.
+      # Injected under this service's identity; never reaches the deploy pipeline.
       env {
         name = "DB_PASSWORD"
         value_source {
@@ -104,9 +100,8 @@ resource "google_cloud_run_v2_service" "api" {
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
-      # `gcloud run deploy` stamps these metadata fields on every app deploy.
-      # Without ignoring them, each deploy leaves drift for the next infra plan
-      # to propose reverting — noise that would eventually mask a real change.
+      # Stamped by `gcloud run deploy` on every app deploy; without these the
+      # app and infra pipelines revert each other forever.
       client,
       client_version,
     ]
@@ -186,8 +181,7 @@ resource "google_cloud_run_v2_job" "migrate" {
   lifecycle {
     ignore_changes = [
       template[0].template[0].containers[0].image,
-      # Same as the service: `gcloud run jobs update` stamps these on every
-      # app deploy.
+      # Same reason as the service.
       client,
       client_version,
     ]

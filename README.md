@@ -118,8 +118,28 @@ terraform apply -var-file=envs/europe-west3.tfvars -var="third_party_api_token=.
 The first apply creates the Cloud Run service against a placeholder image;
 `deploy-app.yml` replaces it on the first app deploy.
 
-Adding a region means copying `infra/envs/europe-west3.tfvars`, changing the
-region and CIDRs, and applying with the new file.
+### Regions
+
+Everything region-specific lives in one file per region under `infra/envs/`,
+so the Terraform itself never changes to add one:
+
+```
+infra/envs/europe-west3.tfvars          the live environment
+infra/envs/us-east4.tfvars.example      template for Meridian's possible US region
+```
+
+Each holds only `project_id`, `region`, and the two CIDRs. To add a region:
+copy the example, drop the `.example`, set the values, and apply with
+`-var-file=envs/<region>.tfvars` against a backend prefix of its own, so each
+region has independent state and can be changed or destroyed without touching
+the others.
+
+The one value that is expensive to get wrong is `vpc_cidr`: it must not overlap
+another region or anything in Meridian's AWS estate, and it cannot be changed
+later without rebuilding the VPC. The `us-east4` template also notes what a
+second region does *not* solve on its own — a global load balancer in front of
+both, and whether EU payment data may be replicated there at all, which their
+legal position suggests it may not.
 
 CI needs repo variables `GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
 `CI_SERVICE_ACCOUNT` and one secret, `THIRD_PARTY_API_TOKEN`. All three

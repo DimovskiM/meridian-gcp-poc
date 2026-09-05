@@ -26,9 +26,17 @@ jobs:
         with:
           terraform_version: "1.16.0"
 
+      - name: terraform fmt
+        working-directory: infra
+        run: terraform fmt -check -recursive -diff
+
       - name: terraform init
         working-directory: infra
         run: terraform init
+
+      - name: terraform validate
+        working-directory: infra
+        run: terraform validate
 
       # Plan is saved to a file and applied verbatim, so what gets applied is
       # exactly what was planned — no re-resolution between the two steps that

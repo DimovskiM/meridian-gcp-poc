@@ -25,9 +25,26 @@ jobs:
         with:
           terraform_version: "1.16.0"
 
+      # Fails the PR on unformatted HCL rather than leaving it to review.
+      - name: terraform fmt
+        working-directory: infra
+        run: terraform fmt -check -recursive -diff
+
       - name: terraform init
         working-directory: infra
         run: terraform init
+
+      - name: terraform validate
+        working-directory: infra
+        run: terraform validate
+
+      # Next step for a real engagement: a security scanner in this job —
+      # Checkov or tfsec against infra/, and Trivy against the built image in
+      # deploy-app.yml. They catch the class of thing a human reviewer skims
+      # past: a bucket losing uniform access, a public IP reappearing on the
+      # database, an over-broad IAM binding, a base image with known CVEs.
+      # Left out here only because tuning the inevitable false positives is not
+      # a five-hour job, and a scanner nobody trusts gets ignored or disabled.
 
       - name: terraform plan
         working-directory: infra

@@ -8,10 +8,9 @@ from models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    # disable_existing_loggers=False: fileConfig's default of True silently
-    # disables any logger not listed in alembic.ini's [loggers] section —
-    # including the app's own "meridian" logger — which swallowed migration
-    # failure logs entirely (the app kept running, but errors went unlogged).
+    # disable_existing_loggers defaults to True, which silently kills any
+    # logger not listed in alembic.ini — including "meridian", which swallowed
+    # migration failure logs entirely.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
