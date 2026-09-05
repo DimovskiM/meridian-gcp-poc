@@ -38,12 +38,6 @@ variable "third_party_api_token" {
 }
 
 variable "container_image" {
-  description = "Fully qualified Artifact Registry image URI (including tag) to deploy. Must already exist — built and pushed before this apply."
+  description = "Fully qualified Artifact Registry image URI (including tag) to deploy. Must already exist — built and pushed before this apply. The only value an app deploy changes; the commit SHA is baked into the image itself at build time, not passed through here."
   type        = string
-}
-
-variable "git_commit" {
-  description = "Short git SHA of the commit being deployed — surfaced in /health."
-  type        = string
-  default     = "unknown"
 }

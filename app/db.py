@@ -12,10 +12,13 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "meridian")
 DB_USER = os.environ.get("DB_USER", "meridian_app")
 
-DB_PASSWORD_SECRET_NAME = os.environ.get("DB_PASSWORD_SECRET_NAME", "db-password")
-THIRD_PARTY_TOKEN_SECRET_NAME = os.environ.get(
-    "THIRD_PARTY_TOKEN_SECRET_NAME", "third-party-api-token"
-)
+# Fixed, not configurable — these match the literal secret_id values in
+# infra/secrets.tf exactly. Not worth passing through an env var: there are
+# exactly two secrets and neither name is ever expected to vary by
+# environment. What Terraform actually owns is *access* to them (the
+# secretAccessor IAM bindings in secrets.tf), not this string.
+DB_PASSWORD_SECRET_NAME = "db-password"
+THIRD_PARTY_TOKEN_SECRET_NAME = "third-party-api-token"
 
 _secret_client = None
 

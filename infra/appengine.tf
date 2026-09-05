@@ -12,11 +12,26 @@ resource "google_app_engine_application" "app" {
   depends_on = [google_project_service.apis]
 }
 
+# All app configuration lives here in Terraform — env vars, VPC placement,
+# runtime service account, health checks. The only thing a deploy changes is
+# var.container_image (the new tag). The commit SHA isn't a Terraform input
+# at all: it's baked into the image at build time as a Docker ENV, so it
+# travels with the artifact rather than being plumbed through infra config.
+#
+# On the provider's documented env_variables quirk (GCP's API doesn't return
+# env_variables on read, so Terraform can't detect drift in them): not a
+# concern here, because version_id is derived from the image tag — every
+# deploy creates a brand-new version resource rather than updating one in
+# place, so there's never an existing resource to drift against.
 resource "google_app_engine_flexible_app_version" "app" {
-  project    = var.project_id
-  service    = "default"
-  runtime    = "custom"
-  version_id = "v-${substr(var.git_commit, 0, 12)}"
+  project = var.project_id
+  service = "default"
+  runtime = "custom"
+
+  # Derived from the image tag (the short SHA), so each deploy is a distinct,
+  # traceable version. Sanitized: version ids must be lowercase alphanumeric
+  # with hyphens.
+  version_id = "v-${lower(replace(regex("[^:]+$", var.container_image), "/[^a-z0-9-]/", "-"))}"
 
   deployment {
     container {
@@ -31,7 +46,6 @@ resource "google_app_engine_flexible_app_version" "app" {
     DB_NAME     = var.db_name
     DB_USER     = var.db_user
     REGION      = var.region
-    GIT_COMMIT  = var.git_commit
   }
 
   service_account = google_service_account.app.email
@@ -48,11 +62,12 @@ resource "google_app_engine_flexible_app_version" "app" {
     # NOTE: this provider's google_app_engine_flexible_app_version has no
     # typed field to force internal-only instances (no "instance_ip_mode"
     # attribute exists in this resource — confirmed against the provider
-    # schema directly, not assumed). App Engine Flexible VMs get an external
-    # IP by default here. This doesn't violate any stated requirement — only
-    # Cloud SQL was required to be unreachable from the internet, and it is —
-    # but it's a real gap vs. the more defensible internal-only posture,
-    # flagged in ASSUMPTIONS.md rather than silently accepted.
+    # schema directly, not assumed; app.yaml's own schema does support
+    # network.instance_ip_mode, but it isn't exposed through this Terraform
+    # resource type). Doesn't violate any stated requirement — only Cloud SQL
+    # was required to be unreachable from the internet, and it is — but it's
+    # a real gap vs. the more defensible internal-only posture, flagged in
+    # ASSUMPTIONS.md rather than silently accepted.
   }
 
   liveness_check {
